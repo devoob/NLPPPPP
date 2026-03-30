@@ -22,8 +22,9 @@ This workspace is configured for **step 2 (feature engineering)** using the MAEC
 - Uses `MAEC_Dataset_Person_Label` speaker labels when available.
 - Cleans sentence text (removes `<UNK>`, normalizes spacing, handles noisy transcript markers).
 - Builds linguistic variables for NLP analysis:
-  - `personalism_index` (first-person pronoun intensity)
-  - `certainty_score` (certainty minus uncertainty, normalized by sentence length)
+  - `personalism_index` (singular/plural first person intensity)
+  - `Loughran‑McDonald financial dictionary` (positive, negative, uncertainty, strong/weak modal, litigious, constraining)
+  - `certainty_score` (based on LM certainty minus uncertainty, normalized by sentence length)
   - lexical and style metrics (`type_token_ratio`, `avg_token_len`, `hedge_count`, `negation_count`)
   - simple financial sentiment proxy (`sentiment_proxy`)
 - Aggregates outputs at sentence, speaker (`person`), and call levels.
