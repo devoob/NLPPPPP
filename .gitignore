@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+
+# Upstream dataset clone and large artifacts
+MAEC_upstream/
+
+# Generated outputs
+data/processed/
+
+# Notebook checkpoints
+.ipynb_checkpoints/
