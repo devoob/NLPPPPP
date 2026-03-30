@@ -9,59 +9,84 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
+# Advanced sentiment analysis
+from textblob import TextBlob
 
-PERSONAL_PRONOUNS = {
-    "i",
-    "me",
-    "my",
-    "mine",
-    "myself",
-    "we",
-    "us",
-    "our",
-    "ours",
-    "ourselves",
-}
+# For improved personalism index using spaCy
+import spacy
 
-CERTAINTY_WORDS = {
-    "definitely",
-    "certainly",
-    "clearly",
-    "always",
-    "must",
-    "will",
-    "confident",
-    "strong",
-    "solid",
-    "prove",
-    "proven",
-    "guarantee",
-    "assured",
-    "expect",
-    "expected",
-}
+# Load spaCy model once
+try:
+    nlp = spacy.load("en_core_web_sm")
+except OSError:
+    print("spaCy model 'en_core_web_sm' not found. Please run: python -m spacy download en_core_web_sm")
+    raise
 
-UNCERTAINTY_WORDS = {
-    "maybe",
-    "might",
-    "could",
-    "may",
-    "uncertain",
-    "uncertainty",
-    "risk",
-    "risks",
-    "volatile",
-    "volatility",
-    "approximately",
-    "around",
-    "estimate",
-    "estimates",
-    "potential",
-    "possible",
-    "possibly",
-    "challenging",
-}
+# ================================
+# Loughran-McDonald Financial Dictionary
+# ================================
+LM_DICT_PATH = "Loughran-McDonald_MasterDictionary_1993-2024.csv"   # Update path if necessary
 
+LM_POSITIVE = set()
+LM_NEGATIVE = set()
+LM_UNCERTAINTY = set()
+LM_STRONG_MODAL = set()
+LM_WEAK_MODAL = set()
+LM_LITIGIOUS = set()
+LM_CONSTRAINING = set()
+
+try:
+    # Read CSV, force 'Word' column as string
+    lm_df = pd.read_csv(LM_DICT_PATH, dtype={'Word': str}, encoding='utf-8')
+    
+    required_cols = ['Word', 'Negative', 'Positive', 'Uncertainty',
+                     'Strong_Modal', 'Weak_Modal', 'Litigious', 'Constraining']
+    missing = [col for col in required_cols if col not in lm_df.columns]
+    if missing:
+        print(f"Warning: Missing columns: {missing}. Using default empty sets.")
+    else:
+        # Convert sentiment columns to numeric (non-numeric -> NaN), then fill NaN with 0
+        for col in required_cols[1:]:   # skip 'Word'
+            lm_df[col] = pd.to_numeric(lm_df[col], errors='coerce').fillna(0)
+
+        for _, row in lm_df.iterrows():
+            word = row['Word']
+            # Skip invalid words
+            if pd.isna(word) or not isinstance(word, str):
+                continue
+            word = word.lower().strip()
+            if not word:
+                continue
+
+            # Add to sets if value is non-zero (2009 or any non-zero)
+            if row['Positive'] != 0:
+                LM_POSITIVE.add(word)
+            if row['Negative'] != 0:
+                LM_NEGATIVE.add(word)
+            if row['Uncertainty'] != 0:
+                LM_UNCERTAINTY.add(word)
+            if row['Strong_Modal'] != 0:
+                LM_STRONG_MODAL.add(word)
+            if row['Weak_Modal'] != 0:
+                LM_WEAK_MODAL.add(word)
+            if row['Litigious'] != 0:
+                LM_LITIGIOUS.add(word)
+            if row['Constraining'] != 0:
+                LM_CONSTRAINING.add(word)
+
+    print(f"Loaded LM dictionary: Positive={len(LM_POSITIVE)}, Negative={len(LM_NEGATIVE)}, "
+          f"Uncertainty={len(LM_UNCERTAINTY)}, Strong_Modal={len(LM_STRONG_MODAL)}, "
+          f"Weak_Modal={len(LM_WEAK_MODAL)}, Litigious={len(LM_LITIGIOUS)}, Constraining={len(LM_CONSTRAINING)}")
+
+except FileNotFoundError:
+    print(f"Warning: {LM_DICT_PATH} not found. Loughran-McDonald features will be zero.")
+except Exception as e:
+    print(f"Error loading LM dictionary: {e}")
+    print("Continuing with empty sets.")
+
+# ================================
+# Other dictionaries (Hedge, Negation)
+# ================================
 HEDGE_WORDS = {
     "sort",
     "kind",
@@ -77,41 +102,9 @@ HEDGE_WORDS = {
 
 NEGATION_WORDS = {"not", "no", "never", "none", "neither", "nor", "without", "cannot", "can't"}
 
-POSITIVE_WORDS = {
-    "growth",
-    "improve",
-    "improved",
-    "improvement",
-    "strong",
-    "benefit",
-    "benefits",
-    "efficient",
-    "opportunity",
-    "opportunities",
-    "momentum",
-    "outperform",
-    "beat",
-    "resilient",
-}
-
-NEGATIVE_WORDS = {
-    "decline",
-    "declined",
-    "weak",
-    "headwind",
-    "headwinds",
-    "loss",
-    "losses",
-    "risk",
-    "risks",
-    "pressure",
-    "uncertain",
-    "uncertainty",
-    "deteriorated",
-    "drag",
-    "challenging",
-}
-
+# ================================
+# Text cleaning and tokenization
+# ================================
 TOKEN_PATTERN = re.compile(r"[a-zA-Z']+")
 MULTISPACE_PATTERN = re.compile(r"\s+")
 UNK_PATTERN = re.compile(r"<UNK>", flags=re.IGNORECASE)
@@ -136,25 +129,63 @@ def count_in_set(tokens: Iterable[str], lexicon: set[str]) -> int:
     return sum(1 for t in tokens if t in lexicon)
 
 
+# ================================
+# Sentence‑level feature extraction
+# ================================
 def sentence_features(sentence: str) -> Dict[str, float]:
     cleaned = clean_text(sentence)
     tokens = tokenize(cleaned)
     n_tokens = len(tokens)
     n_unique = len(set(tokens))
 
-    personal_count = count_in_set(tokens, PERSONAL_PRONOUNS)
-    certainty_count = count_in_set(tokens, CERTAINTY_WORDS)
-    uncertainty_count = count_in_set(tokens, UNCERTAINTY_WORDS)
+    # ---------- 1. Improved personalism index (spaCy) ----------
+    doc = nlp(cleaned)
+    first_person_singular = 0
+    first_person_plural = 0
+    for token in doc:
+        if token.pos_ == "PRON":
+            morph = token.morph
+            if morph.get("Person") == ["1"]:
+                if morph.get("Number") == ["Sing"]:
+                    first_person_singular += 1
+                elif morph.get("Number") == ["Plur"]:
+                    first_person_plural += 1
+                elif not morph.get("Number"):
+                    first_person_singular += 1
+
+    personalism_singular_ratio = first_person_singular / max(1, n_tokens)
+    personalism_plural_ratio = first_person_plural / max(1, n_tokens)
+    personalism_total_ratio = (first_person_singular + first_person_plural) / max(1, n_tokens)
+
+    # ---------- 2. Loughran-McDonald features ----------
+    lm_pos_count = count_in_set(tokens, LM_POSITIVE)
+    lm_neg_count = count_in_set(tokens, LM_NEGATIVE)
+    lm_uncertainty_count = count_in_set(tokens, LM_UNCERTAINTY)
+    lm_strong_count = count_in_set(tokens, LM_STRONG_MODAL)
+    lm_weak_count = count_in_set(tokens, LM_WEAK_MODAL)
+    lm_litigious_count = count_in_set(tokens, LM_LITIGIOUS)
+    lm_constraining_count = count_in_set(tokens, LM_CONSTRAINING)
+
+    # Use LM Strong_Modal as "certainty" and LM Uncertainty as "uncertainty"
+    certainty_count = lm_strong_count
+    uncertainty_count = lm_uncertainty_count
+    certainty_score = (certainty_count - uncertainty_count) / max(1, n_tokens)
+
+    # Additional features
     hedge_count = count_in_set(tokens, HEDGE_WORDS)
     negation_count = count_in_set(tokens, NEGATION_WORDS)
-    positive_count = count_in_set(tokens, POSITIVE_WORDS)
-    negative_count = count_in_set(tokens, NEGATIVE_WORDS)
     numeric_count = sum(1 for t in cleaned.split() if any(ch.isdigit() for ch in t))
 
-    certainty_score = (certainty_count - uncertainty_count) / max(1, n_tokens)
-    personalism_index = personal_count / max(1, n_tokens)
-    sentiment_proxy = (positive_count - negative_count) / max(1, n_tokens)
+    # Extreme positivity proxy: strong modals ratio
+    extreme_positive_ratio = lm_strong_count / max(1, n_tokens)
+    extreme_positive_ratio_adj = lm_strong_count / max(1, lm_pos_count) if lm_pos_count > 0 else 0.0
 
+    # ---------- 3. TextBlob sentiment ----------
+    blob = TextBlob(cleaned)
+    sentiment_polarity = blob.sentiment.polarity
+    sentiment_subjectivity = blob.sentiment.subjectivity
+
+    # ---------- 4. Return all features ----------
     return {
         "clean_sentence": cleaned,
         "n_chars": float(len(cleaned)),
@@ -162,22 +193,46 @@ def sentence_features(sentence: str) -> Dict[str, float]:
         "n_unique_tokens": float(n_unique),
         "type_token_ratio": float(n_unique / max(1, n_tokens)),
         "avg_token_len": float(np.mean([len(t) for t in tokens]) if tokens else 0.0),
-        "personal_pronoun_count": float(personal_count),
-        "personalism_index": float(personalism_index),
+
+        # Personalism
+        "personal_pronoun_singular": float(first_person_singular),
+        "personal_pronoun_plural": float(first_person_plural),
+        "personalism_singular_ratio": float(personalism_singular_ratio),
+        "personalism_plural_ratio": float(personalism_plural_ratio),
+        "personalism_total_ratio": float(personalism_total_ratio),
+
+        # Certainty/Uncertainty (now from LM)
         "certainty_count": float(certainty_count),
         "uncertainty_count": float(uncertainty_count),
         "certainty_score": float(certainty_score),
         "hedge_count": float(hedge_count),
         "negation_count": float(negation_count),
-        "positive_word_count": float(positive_count),
-        "negative_word_count": float(negative_count),
-        "sentiment_proxy": float(sentiment_proxy),
+
+        # All Loughran-McDonald categories
+        "lm_positive_count": float(lm_pos_count),
+        "lm_negative_count": float(lm_neg_count),
+        "lm_uncertainty_count": float(lm_uncertainty_count),
+        "lm_strong_modal_count": float(lm_strong_count),
+        "lm_weak_modal_count": float(lm_weak_count),
+        "lm_litigious_count": float(lm_litigious_count),
+        "lm_constraining_count": float(lm_constraining_count),
+        "extreme_positive_ratio": extreme_positive_ratio,
+        "extreme_positive_ratio_adj": extreme_positive_ratio_adj,
+
+        # Numeric and punctuation
         "numeric_token_count": float(numeric_count),
         "has_question": float("?" in cleaned),
         "has_exclamation": float("!" in cleaned),
+
+        # TextBlob sentiment
+        "sentiment_polarity": sentiment_polarity,
+        "sentiment_subjectivity": sentiment_subjectivity,
     }
 
 
+# ================================
+# Data processing, aggregation, and main function
+# ================================
 def parse_call_id(folder_name: str) -> Dict[str, str]:
     date_part = folder_name[:8]
     ticker = folder_name[9:] if "_" in folder_name else "UNKNOWN"
