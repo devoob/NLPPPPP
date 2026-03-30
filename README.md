@@ -41,6 +41,10 @@ This workspace is configured for **step 2 (feature engineering)** using the MAEC
 pip install -r requirements.txt
 ```
 
+```bash
+python -m spacy download en_core_web_sm
+```
+
 ## Run
 
 ```bash
