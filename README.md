@@ -37,6 +37,7 @@ This workspace is configured for **step 2 (feature engineering)** using the MAEC
 
 - `src/maec_feature_engineering.py`: End-to-end cleaning + linguistic variable construction.
 - `data/processed/`: Output CSV files.
+- `notebooks/ceo_candidate_sanity_table.md`: Quick sanity table for flagged speakers by ticker/date.
 - `MAEC_upstream/`: Cloned source MAEC repository.
 
 ## Setup
@@ -70,6 +71,7 @@ python src/maec_feature_engineering.py \
 - `data/processed/person_level_features.csv`
 - `data/processed/call_level_features.csv`
 - `data/processed/ceo_candidates_by_call.csv`
+- `data/processed/ceo_candidate_sanity_table.csv`
 
 ### CEO-candidate columns
 
