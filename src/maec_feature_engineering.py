@@ -335,6 +335,86 @@ def aggregate_call_level(sent_df: pd.DataFrame) -> pd.DataFrame:
     return call_level.merge(speaker_counts, on="call_id", how="left")
 
 
+def _min_max_scale(series: pd.Series) -> pd.Series:
+    s = series.fillna(0.0).astype(float)
+    min_v = float(s.min())
+    max_v = float(s.max())
+    if max_v - min_v < 1e-12:
+        return pd.Series(np.zeros(len(s)), index=s.index, dtype=float)
+    return (s - min_v) / (max_v - min_v)
+
+
+def identify_ceo_candidates(person_df: pd.DataFrame) -> pd.DataFrame:
+    """Flag one likely management/CEO speaker per call using a transparent heuristic score."""
+    df = person_df.copy()
+
+    if "n_sentences_person" not in df.columns:
+        raise ValueError("person_df must contain 'n_sentences_person' for CEO candidate identification")
+
+    totals = df.groupby("call_id", dropna=False)["n_sentences_person"].transform("sum")
+    df["speaker_sentence_share"] = df["n_sentences_person"] / totals.replace(0, np.nan)
+    df["speaker_sentence_share"] = df["speaker_sentence_share"].fillna(0.0)
+
+    certainty_base = (
+        df["certainty_score"]
+        if "certainty_score" in df.columns
+        else pd.Series(np.zeros(len(df)), index=df.index, dtype=float)
+    )
+    personalism_base = (
+        df["personalism_total_ratio"]
+        if "personalism_total_ratio" in df.columns
+        else pd.Series(np.zeros(len(df)), index=df.index, dtype=float)
+    )
+    question_base = (
+        df["has_question"]
+        if "has_question" in df.columns
+        else pd.Series(np.zeros(len(df)), index=df.index, dtype=float)
+    )
+
+    certainty_component = certainty_base.groupby(df["call_id"], dropna=False).transform(_min_max_scale)
+    personalism_component = personalism_base.groupby(df["call_id"], dropna=False).transform(_min_max_scale)
+    question_component = question_base.groupby(df["call_id"], dropna=False).transform(_min_max_scale)
+
+    # Heuristic weighting: dominant speakers with confident, first-person style and fewer question marks are preferred.
+    df["ceo_candidate_score"] = (
+        0.55 * df["speaker_sentence_share"]
+        + 0.20 * certainty_component
+        + 0.20 * personalism_component
+        + 0.05 * (1.0 - question_component)
+    )
+
+    df["ceo_candidate_rank"] = (
+        df.groupby("call_id", dropna=False)["ceo_candidate_score"]
+        .rank(method="first", ascending=False)
+        .astype(int)
+    )
+    df["is_ceo_candidate"] = (df["ceo_candidate_rank"] == 1).astype(int)
+
+    return df
+
+
+def build_ceo_candidate_map(person_df: pd.DataFrame) -> pd.DataFrame:
+    cols = [
+        "call_id",
+        "call_date",
+        "ticker",
+        "person",
+        "ceo_candidate_score",
+        "speaker_sentence_share",
+        "n_sentences_person",
+    ]
+    ceo_map = person_df.loc[person_df["is_ceo_candidate"] == 1, cols].copy()
+    ceo_map = ceo_map.rename(
+        columns={
+            "person": "ceo_candidate_person",
+            "ceo_candidate_score": "ceo_candidate_score_call",
+            "speaker_sentence_share": "ceo_candidate_sentence_share",
+            "n_sentences_person": "ceo_candidate_n_sentences",
+        }
+    )
+    return ceo_map
+
+
 def merge_audio(call_level_df: pd.DataFrame, maec_dataset_dir: Path) -> pd.DataFrame:
     audio_rows: List[pd.DataFrame] = []
     for call_id in call_level_df["call_id"].tolist():
@@ -377,20 +457,26 @@ def main() -> None:
 
     sent_df = build_dataset(args.maec_dataset_dir, args.person_label_dir)
     person_df = aggregate_person_level(sent_df)
+    person_df = identify_ceo_candidates(person_df)
+    ceo_map_df = build_ceo_candidate_map(person_df)
     call_df = aggregate_call_level(sent_df)
+    call_df = call_df.merge(ceo_map_df, on=["call_id", "call_date", "ticker"], how="left")
     call_df = merge_audio(call_df, args.maec_dataset_dir)
 
     sent_path = args.output_dir / "sentences_cleaned_features.csv"
     person_path = args.output_dir / "person_level_features.csv"
     call_path = args.output_dir / "call_level_features.csv"
+    ceo_map_path = args.output_dir / "ceo_candidates_by_call.csv"
 
     sent_df.to_csv(sent_path, index=False)
     person_df.to_csv(person_path, index=False)
     call_df.to_csv(call_path, index=False)
+    ceo_map_df.to_csv(ceo_map_path, index=False)
 
     print(f"Saved sentence-level data to {sent_path}")
     print(f"Saved person-level data to {person_path}")
     print(f"Saved call-level data to {call_path}")
+    print(f"Saved CEO-candidate map to {ceo_map_path}")
 
 
 if __name__ == "__main__":

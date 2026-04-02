@@ -9,11 +9,13 @@ This workspace is configured for **step 2 (feature engineering)** using the MAEC
 - Cleaned transcript text by removing noise markers (`<UNK>`, transcript artifacts) and normalizing whitespace.
 - Built NLP linguistic variables including personalism index, certainty score, lexical/style metrics, and a sentiment proxy.
 - Aggregated features at three levels: sentence, person, and call.
+- Added a CEO-candidate identification module to flag likely management/CEO speaker per call.
 - Merged call-level aggregates with low-level audio summary statistics from MAEC `features.csv` files.
 - Produced processed datasets in `data/processed/`:
   - `sentences_cleaned_features.csv`
   - `person_level_features.csv`
   - `call_level_features.csv`
+  - `ceo_candidates_by_call.csv`
 - Ran an end-to-end sanity check and confirmed all output files were generated successfully.
 
 ## What this pipeline does
@@ -28,6 +30,7 @@ This workspace is configured for **step 2 (feature engineering)** using the MAEC
   - lexical and style metrics (`type_token_ratio`, `avg_token_len`, `hedge_count`, `negation_count`)
   - simple financial sentiment proxy (`sentiment_proxy`)
 - Aggregates outputs at sentence, speaker (`person`), and call levels.
+- Scores each speaker within a call and flags a single likely CEO/management candidate.
 - Merges aggregated low-level audio statistics from `features.csv` into call-level data.
 
 ## Project structure
@@ -66,6 +69,21 @@ python src/maec_feature_engineering.py \
 - `data/processed/sentences_cleaned_features.csv`
 - `data/processed/person_level_features.csv`
 - `data/processed/call_level_features.csv`
+- `data/processed/ceo_candidates_by_call.csv`
+
+### CEO-candidate columns
+
+- `person_level_features.csv` now includes:
+  - `speaker_sentence_share`
+  - `ceo_candidate_score`
+  - `ceo_candidate_rank`
+  - `is_ceo_candidate` (1 for the top speaker per call)
+- `call_level_features.csv` now includes:
+  - `ceo_candidate_person`
+  - `ceo_candidate_score_call`
+  - `ceo_candidate_sentence_share`
+  - `ceo_candidate_n_sentences`
+- `ceo_candidates_by_call.csv` is a compact call-level mapping for downstream modeling.
 
 ## Notes for your finance project
 
@@ -77,6 +95,5 @@ For your main hypothesis (CEO communication style vs short-term stock movement),
 
 ## Next plan
 
-1. Add a CEO-candidate identification module to flag likely management/CEO speaker per call.
-2. Add a modeling-ready merge template for abnormal returns + financial controls.
-3. Add a baseline regression/classification notebook for your course deliverable.
+1. Add a modeling-ready merge template for abnormal returns + financial controls.
+2. Add a baseline regression/classification notebook for your course deliverable.
