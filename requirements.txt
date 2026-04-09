@@ -3,6 +3,10 @@ pandas>=2.2.0
 tqdm>=4.66.0
 spacy>=3.7.0
 textblob>=0.17.0
+yfinance>=0.2.28
+tenacity>=8.2.0
+requests>=2.31.0
+wrds>=3.1.0
 
 # After installing packages, download spaCy model:
 # python -m spacy download en_core_web_sm
